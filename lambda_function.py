@@ -2,10 +2,6 @@
 This is a Python template for Alexa to get you building skills (conversations) quickly.
 """
 
-"""
-This is a Python template for Alexa to get you building skills (conversations) quickly.
-"""
-
 from __future__ import print_function
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -1098,16 +1094,517 @@ def build_response(session_attributes, speechlet_response):
 
 
 # --------------- Functions that control the skill's behavior ------------------
+def get_welcome_response():
+    """ If we wanted to initialize the session to have some attributes we could
+    add those here
+    """
+
+    session_attributes = {"last_func": "welcome", "cart_list": [], "main_menu_visit": "no", "section_menu_visit": "no"}
+    card_title = "Welcome"
+    speech_output = "Bet! Let's match, who should we pick up from?"
+
+    # If the user either does not reply to the welcome message or says something
+    # that is not understood, they will be prompted again with this text.
+    reprompt_text = "Hello... who should we pick up from?"
+    should_end_session = False
+    return build_response(session_attributes, build_speechlet_response(
+        card_title, speech_output, reprompt_text, should_end_session))
+
+# Get all the eaze menus
+def eaze_menu(intent, session):
+
+    # Crack open the attributes from the session dictionary
+    session_attributes = session["attributes"]
+    was_here = session_attributes["main_menu_visit"]
+
+    if was_here == "yes":
+
+    # if (session_attributes["last_func"] == "shop_by") | (session_attributes["last_func"] == "eaze_menu"):
+        speech_output = session_attributes["head_menu"]
+        session_attributes["last_func"] = "eaze_menu"
+
+    elif was_here == "no":
+        session_attributes["main_menu_visit"] = "yes"
+
+        # Initiate driver and go to eaze site
+        driver = webdriver.Chrome(chrome_options=chrome_options)
+        site = "https://www.eaze.com/menu"
+        driver.get(site)
+
+        time.sleep(1)
+
+        # Get all h2 elements, which represent the items on the menu
+        h2_menu_items = driver.find_elements(By.TAG_NAME, 'h2')
+
+        item_name_dict, section_url_param_item_total_dict, menu, head_menu, tail_menu = \
+            nf.menu_prep(h2_menu_items)
+        driver.close()
+
+        # Add the menus to the session_attributes
+        session_attributes["menu"] = menu
+        session_attributes["head_menu"] = head_menu
+        session_attributes["tail_menu"] = tail_menu
+
+        session_attributes["last_func"] = "eaze_menu"
+        # session_attributes["item_name_dict"] = item_name_dict
+        session_attributes["section_url_param_item_total_dict"] = section_url_param_item_total_dict
+
+        speech_output = head_menu
+
+
+    card_title = "Eaze Main Menu"
+    reprompt_text = "You never responded to the first test message. Sending another one."
+
+    should_end_session = False
+    return build_response(session_attributes, build_speechlet_response(
+        card_title, speech_output, reprompt_text, should_end_session))
+
+
+# "shop_by" helper function - thinning shop_by code
+def get_main_menu(session_attributes, orderNum):
+
+    # Get "section_url_param_item_total_tuple" from "session_attributes"
+    section_url_param_item_total_dict = session_attributes["section_url_param_item_total_dict"]
+    section_url_param_item_total_tuple = section_url_param_item_total_dict[orderNum]
+
+    # Get "url_param" and "section_item_total" from the tuple
+    url_param = section_url_param_item_total_tuple[0]
+    section_item_total = section_url_param_item_total_tuple[1]
+
+    # Update "last_func" value - this is a helper function for "shop_by"
+    session_attributes["last_func"] = "shop_by"
+
+    card_title = "Test"
+    speech_output = "There are " + str(section_item_total) + " items in the " + \
+                    url_param + " section. Would you like to shop by type, category or shop all?"
+
+    reprompt_text = "You never responded to the first test message. Sending another one."
+
+    return session_attributes, card_title, speech_output, reprompt_text
+
+
+# "shop_by" helper function - toogle main menu vs section menu
+def main_menu_section_menu_toogle(last_func, session_attributes):
+    # Who was the original requester main menu or section menu
+    if last_func == "eaze_menu":
+        mm_sm_toogle = "mm"
+        session_attributes["mm_sm_toogle"] = mm_sm_toogle
+
+    elif last_func == "section_menu":
+        mm_sm_toogle = "sm"
+        session_attributes["mm_sm_toogle"] = mm_sm_toogle
+    else:
+        mm_sm_toogle = session_attributes["mm_sm_toogle"]
+
+    return mm_sm_toogle
+
+
+# "shop_by" > "get_section" helper function - creates json image list
+# **ReCREATING ALL JSON ITEMS when called, instead just creating the new item and adding to the list
+def get_item_json_list(cart_list, session_attributes):
+    item_json = []
+
+
+    for item_tuple in cart_list:
+        item_name = item_tuple[0]
+        img_tuple = session_attributes["img_dict"][item_name]
+
+        item_url = img_tuple[0]
+        item_price = img_tuple[1]
+
+        json_list_item = lij.json_display(item_url, item_name, item_price)
+        item_json.append(json_list_item)
+
+    return item_json
+
+# "shop_by" helper function - adds items to cart
+def get_section_menu(session_attributes, orderNum):
+    name_price_dict = session_attributes["name_price_dict"]
+    name_price_tuple = name_price_dict[orderNum]
+    item_name = name_price_tuple[0]
+
+    cart_list = session_attributes["cart_list"]
+    cart_list.append(name_price_tuple)
+
+    item_json = get_item_json_list(cart_list, session_attributes)
+
+    session_attributes["cart_list"] = cart_list
+    session_attributes["json_list_items_dict"] = item_json
+    session_attributes["last_func"] = "shop_by"
+
+    speech_output = item_name + " was added to your cart. Order another item to continue shopping or say checkout?"
+    reprompt_text = "Hey did you hear what I just said"
+    card_title = "Test"
+
+    return session_attributes, card_title, speech_output, reprompt_text
+
+
+def shop_by(intent, session):
+
+    # Get menu from the "session" dictionary
+    session_attributes = session['attributes']
+    intent_name = intent["name"]
+    last_func = session_attributes["last_func"]
+
+    mm_sm_toogle = main_menu_section_menu_toogle(last_func, session_attributes)
+
+    #######################################################################
+    # First time in the "shop_by" function and intent is "eaze" (gets eaze menu)
+    if intent_name == "orderNumber":
+        # Get the order number from the intent dictionary
+        orderNum = intent["slots"]["number"]["value"]
+        # Add "orderNum" value to the session_attributes dictionary
+        session_attributes["orderNum"] = orderNum
+
+        if (last_func == "eaze_menu") | (mm_sm_toogle == "mm"):
+
+            session_attributes, card_title, speech_output, reprompt_text = \
+                get_main_menu(session_attributes, orderNum)
+
+            should_end_session = False
+            return build_response(session_attributes, build_speechlet_response(
+                card_title, speech_output, reprompt_text, should_end_session))
+
+        elif (last_func == "section_menu") | (mm_sm_toogle == "sm"):
+
+            # Calls "get_section_menu"
+            session_attributes, card_title, speech_output, reprompt_text = \
+                get_section_menu(session_attributes, orderNum)
+
+            should_end_session = False
+            return build_response(session_attributes, build_speechlet_response(
+                card_title, speech_output, reprompt_text, should_end_session))
+
+    #######################################################################
+    elif (last_func == "shop_by") & (intent_name == "eaze"):
+        head_menu = session_attributes["head_menu"]
+        speech_output = head_menu
+
+    elif (last_func == "shop_by") & ((intent_name == "shop_all") | (intent_name == "shop_brand") | (intent_name == "shop_type")):
+        s_head_menu = session_attributes["s_head_menu"]
+        speech_output = s_head_menu
+
+    #######################################################################
+    # First time in the "shop_by" function and intent is "repeatMenu"
+    elif (last_func == "eaze_menu") & (intent_name == "repeatMenu"):
+        head_menu = session_attributes["head_menu"]
+        speech_output = head_menu
+
+    # First time in the "shop_by" function and intent is "moreMenu"
+    elif (last_func == "eaze_menu") & (intent_name == "moreMenu"):
+        tail_menu = session_attributes["tail_menu"]
+        speech_output = tail_menu
+        session_attributes["last_func"] = "shop_by"
+
+    #######################################################################
+    # First time in the "shop_by" function and intent is "repeatMenu"
+    elif (last_func == "section_menu") & (intent_name == "repeatMenu"):
+        s_head_menu = session_attributes["s_head_menu"]
+        speech_output = s_head_menu
+
+    # First time in the "shop_by" function and intent is "moreMenu"
+    elif (last_func == "section_menu") & (intent_name == "moreMenu"):
+        s_tail_menu = session_attributes["s_tail_menu"]
+        speech_output = s_tail_menu
+        session_attributes["s_last_func"] = "shop_by"
+
+    #######################################################################
+    # NOT first time in the "shop_by" function and intent is "repeatMenu" or "moreMenu"
+    elif (last_func == "shop_by") & ((intent_name == "repeatMenu") | (intent_name == "moreMenu")):
+        if mm_sm_toogle == "mm":
+            menu = session_attributes["menu"]
+            speech_output = menu
+            session_attributes["last_func"] = "shop_by"
+
+        elif mm_sm_toogle == "sm":
+            s_menu = session_attributes["s_menu"]
+            speech_output = s_menu
+            session_attributes["last_func"] = "shop_by"
+
+    card_title = "Test"
+    reprompt_text = "You never responded to the first test message. Sending another one."
+    should_end_session = False
+    return build_response(session_attributes, build_speechlet_response(
+        card_title, speech_output, reprompt_text, should_end_session))
+
+# "section_menu" > "get_shop_all" helper function - makes "session_atb_values"
+def session_atb_values(section_items):
+    menu_num = 1
+    item_list = []
+    name_price_dict = {}
+    img_dict = {}
+    s_menu = ""
+    head_menu, tail_menu = "", ""
+
+    for item in section_items:
+        item_price, item_name, item_url = nf.get_item_props(item)
+
+        section_items_len = len(section_items)
+
+        name_price_dict[menu_num] = (item_name, item_price)
+
+        s_menu = \
+            nf.get_menu(item_name, section_items_len, s_menu, menu_num)
+        head_menu, tail_menu = \
+            nf.split_menu(item_name, section_items_len, menu_num, head_menu, tail_menu)
+
+        json_list_item = \
+            lij.json_display(item_url, item_name, item_price)
+        item_list = \
+            nf.get_item_list(img_dict, item_name, item_url, item_price, item_list, json_list_item)
+
+        menu_num += 1
+
+    return item_list, name_price_dict, img_dict, s_menu, head_menu, tail_menu
+
+# "section_menu" helper function - makes "shop_all" menu
+def get_shop_all_menu(menu_elms):
+    section_items = menu_elms.find_element_by_xpath('./div[2]')
+    section_items = section_items.find_elements_by_xpath("./div[contains(@class, 'css-1s0dkrt e17jdd020')]")
+
+    item_list, name_price_dict, img_dict, s_menu, head_menu, tail_menu = \
+        session_atb_values(section_items)
+
+    return item_list, name_price_dict, img_dict, s_menu, head_menu, tail_menu
+
+# "section_menu" helper function - makes "shop_all" menu
+def get_section_url_param(session_attributes):
+    # Get order number from session_attributes
+    orderNum = session_attributes["orderNum"]
+
+    section_url_param_item_total_dict = session_attributes["section_url_param_item_total_dict"]
+    section_url_param_item_total_dict_tuple = section_url_param_item_total_dict[orderNum]
+
+    section_url_param = section_url_param_item_total_dict_tuple[0]
+
+    return section_url_param
+
+
+def section_menu(intent, session):
+    # Get menu from the "session" dictionary
+    session_attributes = session['attributes']
+    was_here = session_attributes["section_menu_visit"]
+
+    if was_here == "yes":
+        speech_output = session_attributes["s_head_menu"]
+
+        session_attributes["last_func"] = "section_menu"
+
+        card_title = "Test"
+
+        reprompt_text = "You never responded to the first test message. Sending another one."
+        should_end_session = False
+        return build_response(session_attributes, display_build_speechlet_response(
+            card_title, speech_output, reprompt_text, should_end_session, session_attributes))
+
+    elif was_here == "no":
+        session_attributes["section_menu_visit"] = "yes"
+
+    section_url_param = get_section_url_param(session_attributes)
+
+    # Initiate driver and get site
+    driver = webdriver.Chrome(chrome_options=chrome_options)
+
+    # Create site string url for selected item
+    site = "https://www.eaze.com/groups/" + section_url_param
+
+    # Get the selected item url
+    driver.get(site)
+
+    time.sleep(1)
+
+    menu_elms = driver.find_element_by_xpath("//div[2]/div/div[2]")
+
+    # Get Menu Type Items
+    menu_types = menu_elms.find_element_by_xpath("./div[1]/div/div[1]")
+    type_items = menu_types.find_elements_by_xpath("./div[2]/button")
+
+
+    # Get the order number from the intent dictionary
+    shop_by_selection = intent["name"]
+
+    if shop_by_selection == "shop_by_type":
+
+        type_items_list = []
+        counter = 1
+        for item in type_items:
+            type_items_list.append(item.text.strip())
+
+            if counter == 1:
+                say_types = item.text
+            elif counter < len(type_items):
+                say_types += ", " + item.text
+            else:
+                say_types += ", " + ", " + item.text + "."
+
+            counter += 1
+
+        speech_output = say_types
+
+    elif shop_by_selection == "shop_by_brand":
+        # Get Menu Brands
+        menu_brands = menu_elms.find_element_by_xpath("./div[1]/div/div[2]/div[1]")
+        brand_items = menu_elms.find_elements_by_xpath("./div[1]/div/div[2]/div[2]")
+        brand_items = brand_items[0].text
+        brand_items = brand_items.split('\n')
+
+        menu_brands_list = []
+        counter = 1
+
+        for item in brand_items:
+            print("an item", item)
+            the_item = item
+            menu_brands_list.append(the_item)
+
+            if counter == 1:
+                say_brands = the_item
+            elif counter < len(brand_items):
+                say_brands += ", " + the_item
+            else:
+                say_brands += " " + the_item + "."
+
+            counter += 1
+
+        speech_output = say_brands
+
+    elif shop_by_selection == "shop_all":
+
+        item_list, name_price_dict, img_dict, s_menu, s_head_menu, s_tail_menu = \
+            get_shop_all_menu(menu_elms)
+
+        speech_output = s_head_menu
+
+    driver.close()
+    item_list = item_list[0]
+    session_attributes["json_list_items_dict"] = item_list
+    session_attributes["last_func"] = "section_menu"
+    session_attributes["name_price_dict"] = name_price_dict
+    session_attributes["img_dict"] = img_dict
+    session_attributes["s_menu"] = s_menu
+    session_attributes["s_head_menu"] = s_head_menu
+    session_attributes["s_tail_menu"] = s_tail_menu
+
+    card_title = "Test"
+
+    reprompt_text = "You never responded to the first test message. Sending another one."
+    should_end_session = False
+    return build_response(session_attributes, display_build_speechlet_response(
+        card_title, speech_output, reprompt_text, should_end_session, session_attributes))
+
+
+# def order(intent, session):
+#
+#     # Initiate driver and get site
+#     driver = webdriver.Chrome(chrome_options=chrome_options)
+#     site = "https://www.eaze.com/menu"
+#     driver.get(site)
+#
+#     time.sleep(1)
+#
+#     # Get menu from the "session" dictionary
+#     session_attributes = session['attributes']
+#     menu = session_attributes['menu']
+#
+#     # Get the order number from the intent dictionary
+#     orderNum = intent["slots"]["number"]["value"]
+#
+#     # Get h2 you are looking for menu[orderNum]
+#     text = menu[orderNum]
+#
+#     # Geting all the h2 tags
+#     page_data = driver.find_elements(By.TAG_NAME, 'h2')
+#
+#     for header in page_data:
+#
+#         # Use if statement to find the selected item
+#         # if header == text:
+#         if header.text == text:
+#
+#             # Find button tag for selected header item
+#             buttons = header.find_element_by_xpath('..')
+#             buttons = buttons.find_element_by_xpath('..')
+#
+#             # Returns "goToMenuGroupPage_xxxxxxx"
+#             buttons = buttons.find_element_by_xpath(".//button").get_attribute('data-e2eid')
+#
+#             # Remove "goToMenuGroupPage_" from data-e2eid attribute
+#             buttons = buttons[18:]
+#
+#             # Create site string url for selected item
+#             site = "https://www.eaze.com/groups/" + buttons
+#
+#             # Get the selected item url
+#             driver.get(site)
+#
+#             time.sleep(1)
+#
+#             menu_elms = driver.find_element_by_xpath("//div[2]/div/div[2]")
+#
+#             menu_items = menu_elms.find_elements_by_xpath("./div[2]/div")
+#             num_menu_items = len(menu_items)
+#
+#             # Get Menu Type Items
+#             menu_types = menu_elms.find_element_by_xpath("./div[1]/div/div[1]")
+#             type_title = menu_types.find_element_by_xpath("./div[1]").text
+#             type_items = menu_types.find_elements_by_xpath("./div[2]/button")
+#
+#             type_items_list = []
+#             counter = 1
+#             for item in type_items:
+#                 type_items_list.append(item.text.strip())
+#
+#                 if counter == 1:
+#                     say_types = item.text
+#                 elif counter < len(type_items):
+#                     say_types += ", " + item.text
+#                 else:
+#                     say_types += ", " + ", " + item.text + "."
+#
+#             # Get Menu Brands
+#             menu_brands = menu_elms.find_element_by_xpath("./div[1]/div/div[2]/div[1]")
+#             brand_items = menu_elms.find_elements_by_xpath("./div[1]/div/div[2]/div[2]")
+#             brand_items = brand_items[0].text
+#             brand_items = brand_items.split('\n')
+#
+#             menu_brands_list = []
+#             counter = 1
+#
+#             for item in brand_items:
+#                 print("an item", item)
+#                 the_item = item
+#                 menu_brands_list.append(the_item)
+#
+#                 if counter == 1:
+#                     say_brands = the_item
+#                 elif counter < len(brand_items):
+#                     say_brands += ", " + the_item
+#                 else:
+#                     say_brands += ", " + the_item + "."
+#
+#                 counter += 1
+#
+#             driver.close()
+#             break
+#
+#     card_title = "Test"
+#     speech_output = "There are " + str(num_menu_items) + " items on the menu." + " The brands are " + say_brands
+#     reprompt_text = "You never responded to the first test message. Sending another one."
+#     should_end_session = False
+#     return build_response(session_attributes, build_speechlet_response(
+#         card_title, speech_output, reprompt_text, should_end_session))
+
+
 def send_receipt(intent, session):
     TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID")
     TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN")
     TWILIO_SMS_URL = "https://api.twilio.com/2010-04-01/Accounts/{}/Messages.json"
+    to_number = os.environ.get("SEND_TO_NUMBER")
+    from_number = os.environ.get("TWILIO_NUMBER")
 
     session_attributes = session["attributes"]
     cart_list = session_attributes["cart_list"]
 
-    to_number = "+16613029696"
-    from_number = "+12019077822"
+
     body = cart_list
 
     if not TWILIO_ACCOUNT_SID:
@@ -1193,421 +1690,6 @@ def checkout(intent, session):
         card_title, speech_output, reprompt_text, should_end_session, session_attributes))
 
 
-def order(intent, session):
-    # Initiate driver and get site
-    driver = webdriver.Chrome(chrome_options=chrome_options)
-    site = "https://www.eaze.com/menu"
-    driver.get(site)
-
-    # Intiate menu variables
-    menu = ""
-    title_menu = ""
-    short_menu = ""
-
-    time.sleep(1)
-
-    # Set "count" @ 1 because
-    count = 1
-    p = 0
-
-    # Get menu from the "session" dictionary
-    session_attributes = session['attributes']
-    menu = session_attributes['menu']
-
-    # h2_menu_items = session_attributes['menu_items']
-    # print("session_attributes>>>", session_attributes)
-
-    # Get the order number from the intent dictionary
-    orderNum = intent["slots"]["number"]["value"]
-
-    # Get h2 you are looking for menu[orderNum]
-    text = menu[orderNum]
-
-    # Geting all the h2 tags
-    page_data = driver.find_elements(By.TAG_NAME, 'h2')
-    # item_list = session_attributes["item_list"]
-
-    for header in page_data:
-
-        # Use if statement to find the selected item
-        # if header == text:
-        if header.text == text:
-
-            # Find button tag for selected header item
-            buttons = header.find_element_by_xpath('..')
-            buttons = buttons.find_element_by_xpath('..')
-
-            # Returns "goToMenuGroupPage_xxxxxxx"
-            buttons = buttons.find_element_by_xpath(".//button").get_attribute('data-e2eid')
-
-            # Remove "goToMenuGroupPage_" from data-e2eid attribute
-            buttons = buttons[18:]
-
-            # Create site string url for selected item
-            site = "https://www.eaze.com/groups/" + buttons
-
-            # Get the selected item url
-            driver.get(site)
-
-            time.sleep(1)
-
-            menu_elms = driver.find_element_by_xpath("//div[2]/div/div[2]")
-
-            menu_items = menu_elms.find_elements_by_xpath("./div[2]/div")
-            num_menu_items = len(menu_items)
-
-            # Get Menu Type Items
-            menu_types = menu_elms.find_element_by_xpath("./div[1]/div/div[1]")
-            type_title = menu_types.find_element_by_xpath("./div[1]").text
-            type_items = menu_types.find_elements_by_xpath("./div[2]/button")
-
-            type_items_list = []
-            counter = 1
-            for item in type_items:
-                type_items_list.append(item.text.strip())
-
-                if counter == 1:
-                    say_types = item.text
-                elif counter < len(type_items):
-                    say_types += ", " + item.text
-                else:
-                    say_types += ", " + ", " + item.text + "."
-
-            # Get Menu Brands
-            menu_brands = menu_elms.find_element_by_xpath("./div[1]/div/div[2]/div[1]")
-            brand_items = menu_elms.find_elements_by_xpath("./div[1]/div/div[2]/div[2]")
-            brand_items = brand_items[0].text
-            brand_items = brand_items.split('\n')
-
-            menu_brands_list = []
-            counter = 1
-
-            for item in brand_items:
-                print("an item", item)
-                the_item = item
-                menu_brands_list.append(the_item)
-
-                if counter == 1:
-                    say_brands = the_item
-                elif counter < len(brand_items):
-                    say_brands += ", " + the_item
-                else:
-                    say_brands += ", " + the_item + "."
-
-                counter += 1
-
-            driver.close()
-            break
-
-    card_title = "Test"
-    speech_output = "There are " + str(num_menu_items) + " items on the menu." + " The brands are " + say_brands
-    reprompt_text = "You never responded to the first test message. Sending another one."
-    should_end_session = False
-    return build_response(session_attributes, build_speechlet_response(
-        card_title, speech_output, reprompt_text, should_end_session))
-
-
-def section_page(intent, session):
-    # Initiate driver and get site
-    driver = webdriver.Chrome(chrome_options=chrome_options)
-
-    # Get menu from the "session" dictionary
-    session_attributes = session['attributes']
-
-    # Get order number from session_attributes
-    orderNum = session_attributes["orderNum"]
-
-    h2_mm_item_button_dict = session_attributes["h2_mm_item_button_dict"]
-    item_tuple = h2_mm_item_button_dict[orderNum]
-
-    section = item_tuple[0]
-
-    # Create site string url for selected item
-    site = "https://www.eaze.com/groups/" + section
-
-    # Get the selected item url
-    driver.get(site)
-
-    time.sleep(1)
-
-    # Get the order number from the intent dictionary
-    shop_by_selection = intent["name"]
-
-    menu_elms = driver.find_element_by_xpath("//div[2]/div/div[2]")
-
-    # I have this info already
-    menu_items = menu_elms.find_elements_by_xpath("./div[2]/div")
-    num_menu_items = len(menu_items)
-
-    # Get Menu Type Items
-    menu_types = menu_elms.find_element_by_xpath("./div[1]/div/div[1]")
-    type_title = menu_types.find_element_by_xpath("./div[1]").text
-    type_items = menu_types.find_elements_by_xpath("./div[2]/button")
-
-    if shop_by_selection == "shop_by_type":
-
-        type_items_list = []
-        counter = 1
-        for item in type_items:
-            type_items_list.append(item.text.strip())
-
-            if counter == 1:
-                say_types = item.text
-            elif counter < len(type_items):
-                say_types += ", " + item.text
-            else:
-                say_types += ", " + ", " + item.text + "."
-
-            counter += 1
-
-        speech_output = say_types
-
-    elif shop_by_selection == "shop_by_brand":
-        # Get Menu Brands
-        menu_brands = menu_elms.find_element_by_xpath("./div[1]/div/div[2]/div[1]")
-        brand_items = menu_elms.find_elements_by_xpath("./div[1]/div/div[2]/div[2]")
-        brand_items = brand_items[0].text
-        brand_items = brand_items.split('\n')
-
-        menu_brands_list = []
-        counter = 1
-
-        for item in brand_items:
-            print("an item", item)
-            the_item = item
-            menu_brands_list.append(the_item)
-
-            if counter == 1:
-                say_brands = the_item
-            elif counter < len(brand_items):
-                say_brands += ", " + the_item
-            else:
-                say_brands += " " + the_item + "."
-
-            counter += 1
-
-        speech_output = say_brands
-
-    elif shop_by_selection == "shop_all":
-
-        section_items = menu_elms.find_element_by_xpath('./div[2]')
-        section_items = section_items.find_elements_by_xpath("./div[contains(@class, 'css-1s0dkrt e17jdd020')]")
-
-        menu_num = 1
-        short_menu = ""
-        item_list = []
-        name_price_dict = {}
-        img_dict = {}
-
-        p = 0
-        for item in section_items:
-            item_price = item.find_element_by_xpath('./div/div/div[2]/div[1]')
-            item_price = item_price.text
-
-            # Get the name of the item
-            item_name = item.find_element_by_xpath('./div/div/div[2]/div[2]')
-            item_name = item_name.text
-
-            # Get the item url
-            item_url = item.find_element_by_xpath('./div/div/div[1]/div[1]/img')
-            item_url = item_url.get_attribute("src")
-
-            name_price_dict[menu_num] = (item_name, item_price)
-
-            # Creates abbreviated menu so alexa doesnt have to repeat the entire menu
-            if p < 7:
-                short_menu += str(menu_num) + ". " + item_name + ", "
-                json_list_item = lij.json_display(item_url, item_name, item_price)
-                img_dict[item_name] = (item_url, item_price)
-                item_list.append(json_list_item)
-
-            # Incrament variables
-            menu_num += 1
-            p += 1
-
-            # Add the following pharse before the loop ends
-            if p == len(section_items):
-
-                short_menu += "Say Repeat if you were too high the first time"
-
-                if p > 7:
-                    short_menu += ", or Say More to hear the rest of the menu."
-
-                else:
-                    short_menu += "."
-
-        # print(section_items.get_attribute('class'))
-        speech_output = short_menu
-
-    driver.close()
-
-    session_attributes["json_list_items_dict"] = item_list
-    session_attributes["last_func"] = "section_page"
-    session_attributes["name_price_dict"] = name_price_dict
-    session_attributes["img_dict"] = img_dict
-
-    card_title = "Test"
-
-    reprompt_text = "You never responded to the first test message. Sending another one."
-    should_end_session = False
-    return build_response(session_attributes, display_build_speechlet_response(
-        card_title, speech_output, reprompt_text, should_end_session, session_attributes))
-
-
-def shop_by(intent, session):
-    # Get the order number from the intent dictionary
-    orderNum = intent["slots"]["number"]["value"]
-
-    # Get menu from the "session" dictionary
-    session_attributes = session['attributes']
-    last_func = session_attributes["last_func"]
-
-    if last_func == "eaze_up":
-        h2_mm_item_button_dict = session_attributes["h2_mm_item_button_dict"]
-        item_tuple = h2_mm_item_button_dict[orderNum]
-
-        section = item_tuple[0]
-        num_cat_items = item_tuple[1]
-
-        # Add orderNum value session_attributes
-        session_attributes["orderNum"] = orderNum
-        session_attributes["last_func"] = "shop_by"
-
-        card_title = "Test"
-        speech_output = "There are " + str(num_cat_items) + " items in the " + \
-                        section + " section. Would you like to shop by type, category or shop all?"
-
-    elif last_func == 'section_page':
-        name_price_dict = session_attributes["name_price_dict"]
-        name_price_tuple = name_price_dict[orderNum]
-
-        item_name = name_price_tuple[0]
-        item_price = name_price_tuple[1]
-
-        cart_list = session_attributes["cart_list"]
-        cart_list.append(name_price_tuple)
-        session_attributes["cart_list"] = cart_list
-
-        item_json = []
-        for item_tuple in cart_list:
-            item_name = item_tuple[0]
-
-            img_tuple = session_attributes["img_dict"][item_name]
-            item_url = img_tuple[0]
-            item_price = img_tuple[1]
-
-            json_list_item = lij.json_display(item_url, item_name, item_price)
-            item_json.append(json_list_item)
-
-        session_attributes["json_list_items_dict"] = item_json
-        card_title = "Test"
-        speech_output = item_name + " was added to your cart. Order another item to continue shopping or say checkout?"
-
-    reprompt_text = "You never responded to the first test message. Sending another one."
-    should_end_session = False
-    return build_response(session_attributes, display_build_speechlet_response(
-        card_title, speech_output, reprompt_text, should_end_session, session_attributes))
-
-
-def eaze_up(intent, session):
-    session_attributes = session["attributes"]
-
-    # Initiate driver and go to eaze site
-    driver = webdriver.Chrome(chrome_options=chrome_options)
-    site = "https://www.eaze.com/menu"
-    driver.get(site)
-
-    # Intiate menu variables
-    menu = ""
-    title_menu = ""
-    short_menu = ""
-
-    time.sleep(1)
-
-    # Get all h2 elements, which represent the items on the menu
-    h2_menu_items = driver.find_elements(By.TAG_NAME, 'h2')
-
-    # Initate variables used in the following loop
-    h2_mm_item_dict = {}
-    menu_num = 1
-    p = 0
-    item_list = []
-    h2_mm_item_button_dict = {}
-
-    # Loop through each item in the menu_items
-    for item in h2_menu_items:
-
-        # Add h2 menu item items to the h2_mm_item_button_dict, use menu num as key variable
-        h2_mm_item_button_dict[menu_num] = nf.getAll_Buttons(item)
-
-        # Add menu item text to the h2_mm_item_dict, use menu num as key variable
-        h2_mm_item_dict[menu_num] = item.text
-
-        menu += str(menu_num) + " " + item.text + " "
-
-        # Create abbreviated menu for the title
-        if p < 4:
-            title_menu += str(menu_num) + ". " + item.text + ", "
-
-        # Creates abbreviated menu so alexa doesnt have to repeat the entir menu
-        if p < 7:
-            short_menu += str(menu_num) + ". " + item.text + ", "
-
-        # Incrament variables
-        menu_num += 1
-        p += 1
-
-        # Add the following pharse before the loop ends
-        if p == len(h2_menu_items):
-            short_menu += "Say Repeat if you were too high the first time, \
-            or Say More to hear the rest of the menu."
-
-    # Add menu_dict to the session_attributes, key value "menu"
-    session_attributes["last_func"] = "eaze_up"
-    session_attributes["h2_mm_item_dict"] = h2_mm_item_dict
-    session_attributes["h2_mm_item_button_dict"] = h2_mm_item_button_dict
-    session_attributes["json_list_items_dict"] = item_list
-
-    driver.close()
-
-    card_title = title_menu
-    speech_output = short_menu
-    reprompt_text = "You never responded to the first test message. Sending another one."
-    should_end_session = False
-    return build_response(session_attributes, build_speechlet_response(
-        card_title, speech_output, reprompt_text, should_end_session))
-
-
-def get_test_response():
-    """ An example of a custom intent. Same structure as welcome message, just make sure to add this intent
-    in your alexa skill in order for it to work.
-    """
-    session_attributes = {}
-    card_title = "Test"
-    speech_output = "This is a test message"
-    reprompt_text = "You never responded to the first test message. Sending another one."
-    should_end_session = False
-    return build_response(session_attributes, build_speechlet_response(
-        card_title, speech_output, reprompt_text, should_end_session))
-
-
-def get_welcome_response():
-    """ If we wanted to initialize the session to have some attributes we could
-    add those here
-    """
-
-    session_attributes = {"recent": "welcome", "cart_list": []}
-    card_title = "Welcome"
-    speech_output = "Bet! Let's match, who should we pick up from?"
-
-    # If the user either does not reply to the welcome message or says something
-    # that is not understood, they will be prompted again with this text.
-    reprompt_text = "Hello... who should we pick up from?"
-    should_end_session = False
-    return build_response(session_attributes, build_speechlet_response(
-        card_title, speech_output, reprompt_text, should_end_session))
-
-
 def handle_session_end_request():
     card_title = "Session Ended"
     speech_output = "Thank you for trying the Alexa Skills Kit sample. " \
@@ -1645,14 +1727,12 @@ def on_intent(intent_request, session):
     print("intent", intent)
 
     # Dispatch to your skill's intent handlers
-    if intent_name == "test":
-        return get_test_response()
-    elif intent_name == "orderNumber":
+    if intent_name == "eaze":
+        return eaze_menu(intent, session)
+    elif (intent_name == "orderNumber") | (intent_name == "repeatMenu") | (intent_name == "moreMenu"):
         return shop_by(intent, session)
-    elif intent_name == "eaze":
-        return eaze_up(intent, session)
     elif (intent_name == "shop_by_type") | (intent_name == "shop_by_band") | (intent_name == "shop_all"):
-        return section_page(intent, session)
+        return section_menu(intent, session)
     elif intent_name == "checkout":
         return checkout(intent, session)
     elif intent_name == "confirm":
